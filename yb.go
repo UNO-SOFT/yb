@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goyek/goyek/v2"
 	"github.com/goyek/x/boot"
@@ -86,8 +87,12 @@ func GoShouldBuild(name string) bool {
 	if old, err := QtcIsOld(name); err != nil || old {
 		return true
 	}
-	goModTime := MTime("go.mod")
 	destTime := MTime(filepath.Join(GoBin, name))
+	if destTime == 0 {
+		nm, _ := PackageName("./" + name)
+		return nm == "main"
+	}
+	goModTime := MTime("go.mod")
 	if destTime != 0 && destTime < goModTime {
 		return true
 	}
@@ -141,4 +146,11 @@ func ReadDirLinks(path string) ([]string, error) {
 		links = append(links, di.Name())
 	}
 	return links, err
+}
+
+func PackageName(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	b, err := exec.CommandContext(ctx, "go", "list", "-f", "{{.Name}}", path).Output()
+	cancel()
+	return string(bytes.TrimSpace(b)), err
 }
