@@ -1,4 +1,6 @@
 // Copyright 2024 Tamas Gulacsi. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package yb
 
@@ -20,11 +22,11 @@ type (
 	A           = goyek.A
 	DefinedTask = goyek.DefinedTask
 	Deps        = goyek.Deps
-	Task = goyek.Task
+	Task        = goyek.Task
 )
 
 var (
-	Define = goyek.Define
+	Define     = goyek.Define
 	Main       = boot.Main
 	SetDefault = goyek.SetDefault
 )
