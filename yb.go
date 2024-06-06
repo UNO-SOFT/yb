@@ -33,6 +33,8 @@ var (
 )
 
 func GoDeps(ctx context.Context, name string) []string {
+	b, _ := exec.CommandContext(ctx, "go", "list", "./"+name).Output()
+	prefix := string(bytes.TrimSpace(b))
 	cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{range .Deps}}{{.}}\n{{end}}", "./"+name)
 	b, err := cmd.Output()
 	if err != nil {
@@ -41,7 +43,7 @@ func GoDeps(ctx context.Context, name string) []string {
 	lines := bytes.Split(b, []byte("\n"))
 	deps := make([]string, 0, len(lines))
 	for _, b := range lines {
-		if b, ok := bytes.CutPrefix(b, []byte("unosoft.hu/sysutils/")); ok {
+		if b, ok := bytes.CutPrefix(b, []byte(prefix)); ok {
 			deps = append(deps, string(b))
 		}
 	}
@@ -105,6 +107,10 @@ func GoShouldBuild(name string) bool {
 func QtcIsOld(root string) (bool, error) {
 	var old bool
 	err := filepath.WalkDir(root, func(path string, di fs.DirEntry, err error) error {
+		if err != nil {
+			slog.Error("walk", "path", path, "error", err)
+			return nil
+		}
 		if old {
 			return fs.SkipAll
 		}
