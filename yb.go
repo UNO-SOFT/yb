@@ -83,9 +83,7 @@ func MTime(paths ...string) int64 {
 }
 
 func GoShouldBuild(name string) bool {
-	if old, err := QtcIsOld(name); err != nil {
-		return true
-	} else if old {
+	if old, err := QtcIsOld(name); err != nil || old {
 		return true
 	}
 	goModTime := MTime("go.mod")
@@ -95,7 +93,8 @@ func GoShouldBuild(name string) bool {
 	}
 	files, _ := filepath.Glob(filepath.Join(name, "*.go"))
 	maxTime := MTime(files...)
-	return maxTime < goModTime || destTime != 0 && destTime < goModTime
+	// a.Logf("destTime=%d goModTime=%d maxTime=%d", destTime, goModTime, maxTime)
+	return maxTime < goModTime || destTime != 0 && destTime < maxTime
 }
 
 func QtcIsOld(root string) (bool, error) {
