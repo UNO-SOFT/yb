@@ -59,12 +59,13 @@ var (
 
 func GoInstall(a *goyek.A, force bool) bool {
 	a.Helper()
-	if old, err := QtcIsOld(a.Name()); err != nil {
+	ctx := ContextWithA(a)
+	if old, err := QtcIsOld(ctx, a.Name()); err != nil {
 		a.Error(err)
 	} else if old {
 		Run(a, []string{"qtc"}, AtDir(a.Name()))
 	}
-	if GoShouldBuild(a.Name()) {
+	if GoShouldBuild(ctx, a.Name()) {
 		Run(a, []string{"go", "install", "-ldflags=-s -w", "-tags=" + brunoCus, "./" + a.Name()})
 		return true
 	}
@@ -85,30 +86,45 @@ func MTime(paths ...string) int64 {
 	return maxTime
 }
 
-func GoShouldBuild(name string) bool {
-	if old, err := QtcIsOld(name); err != nil || old {
+func GoShouldBuild(ctx context.Context, name string) bool {
+	logger := LoggerFromContext(ctx)
+	if old, err := QtcIsOld(ctx, name); err != nil {
+		logger.Error("QtcIsOld", "error", err)
+		return true
+	} else if old {
+		logger.Log("QtcIsOld")
 		return true
 	}
 	destTime := MTime(filepath.Join(GoBin, name))
 	if destTime == 0 {
 		nm, _ := PackageName("./" + name)
-		return nm == "main"
+		logger.Log("no dest", "name", nm)
+		if nm == "main" {
+			return true
+		}
 	}
 	goModTime := MTime("go.mod")
 	if destTime != 0 && destTime < goModTime {
+		logger.Log("go.mod is newer")
 		return true
 	}
 	files, _ := filepath.Glob(filepath.Join(name, "*.go"))
 	maxTime := MTime(files...)
-	// a.Logf("destTime=%d goModTime=%d maxTime=%d", destTime, goModTime, maxTime)
-	return maxTime < goModTime || destTime != 0 && destTime < maxTime
+	if destTime != 0 && destTime < maxTime {
+		logger.Log("*.go is newer than dest")
+	}
+	return false
 }
 
-func QtcIsOld(root string) (bool, error) {
+func QtcIsOld(ctx context.Context, root string) (bool, error) {
+	logger := LoggerFromContext(ctx)
 	var old bool
 	err := filepath.WalkDir(root, func(path string, di fs.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
-			slog.Error("walk", "path", path, "error", err)
+			logger.Error("walk", "path", path, "error", err)
 			return nil
 		}
 		if old {
@@ -117,10 +133,12 @@ func QtcIsOld(root string) (bool, error) {
 		if di.Type().IsRegular() && strings.HasSuffix(path, ".qtpl") {
 			fi, err := di.Info()
 			if err != nil {
+				logger.Error("stat", "file", di.Name(), "error", err)
 				old = true
 				return err
 			}
 			if old = fi.ModTime().UnixMilli() > MTime(path+".go"); old {
+				logger.Log("go is older than qtc", "path", path)
 				return fs.SkipAll
 			}
 		}
@@ -159,4 +177,55 @@ func PackageName(path string) (string, error) {
 	b, err := exec.CommandContext(ctx, "go", "list", "-f", "{{.Name}}", path).Output()
 	cancel()
 	return string(bytes.TrimSpace(b)), err
+}
+
+type ctxA struct{}
+
+func ContextWithA(a *A) context.Context {
+	return context.WithValue(a.Context(), ctxA{}, a)
+}
+func AFromContext(ctx context.Context) *A { a, _ := ctx.Value(ctxA{}).(*A); return a }
+
+type aLogger interface {
+	Log(...any)
+	Error(...any)
+}
+
+type ctxLog struct{}
+
+func ContextWithLogger(ctx context.Context, logger aLogger) context.Context {
+	return context.WithValue(ctx, ctxLog{}, logger)
+}
+func LoggerFromContext(ctx context.Context) aLogger {
+	if logger, ok := ctx.Value(ctxLog{}).(aLogger); ok {
+		return logger
+	}
+	return defaultLogger{slog.Default()}
+}
+
+type defaultLogger struct{ *slog.Logger }
+
+func (lgr defaultLogger) Log(args ...any) {
+	if len(args) == 0 {
+		return
+	}
+	s, ok := args[0].(string)
+	if ok {
+		args = args[1:]
+	} else {
+		s = "info"
+	}
+	lgr.Logger.Info(s, args...)
+}
+func (lgr defaultLogger) Error(args ...any) {
+	if len(args) == 0 {
+		return
+	}
+	s, ok := args[0].(string)
+	if ok {
+		args = args[1:]
+	} else {
+		s = "ERROR"
+	}
+	lgr.Logger.Error(s, args...)
 }
