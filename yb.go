@@ -7,13 +7,13 @@ package yb
 import (
 	"bytes"
 	"context"
+	"go/build"
 	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/goyek/goyek/v2"
 	"github.com/goyek/x/boot"
@@ -33,18 +33,15 @@ var (
 )
 
 func GoDeps(ctx context.Context, name string) []string {
-	b, _ := exec.CommandContext(ctx, "go", "list", "./"+name).Output()
-	prefix := string(bytes.TrimSpace(b))
-	cmd := exec.CommandContext(ctx, "go", "list", "-f", "{{range .Deps}}{{.}}\n{{end}}", "./"+name)
-	b, err := cmd.Output()
+	pkg, err := build.ImportDir("./"+name, build.IgnoreVendor)
 	if err != nil {
-		slog.Error("goDeps", "cmd", cmd.Args, "out", string(b), "error", err)
+		panic(err)
 	}
-	lines := bytes.Split(b, []byte("\n"))
-	deps := make([]string, 0, len(lines))
-	for _, b := range lines {
-		if b, ok := bytes.CutPrefix(b, []byte(prefix)); ok {
-			deps = append(deps, string(b))
+	prefix := pkg.Name
+	deps := make([]string, 0, len(pkg.Imports))
+	for _, s := range pkg.Imports {
+		if s, ok := strings.CutPrefix(s, prefix); ok {
+			deps = append(deps, s)
 		}
 	}
 	return deps
@@ -53,9 +50,15 @@ func GoDeps(ctx context.Context, name string) []string {
 var (
 	brunoCus = os.Getenv("BRUNO_CUS")
 
-	_goBin, _ = exec.CommandContext(context.Background(), "go", "env", "GOBIN").Output()
-	GoBin     = string(bytes.TrimSpace(_goBin))
+	GoBin = os.Getenv("GOBIN")
 )
+
+func init() {
+	if GoBin == "" {
+		b, _ := exec.CommandContext(context.Background(), "go", "env", "GOBIN").Output()
+		GoBin = string(bytes.TrimSpace(b))
+	}
+}
 
 func GoInstall(a *goyek.A, force bool) bool {
 	a.Helper()
@@ -95,11 +98,14 @@ func GoShouldBuild(ctx context.Context, name string) bool {
 		logger.Log("QtcIsOld")
 		return true
 	}
+	var pkg *build.Package
+
 	destTime := MTime(filepath.Join(GoBin, name))
 	if destTime == 0 {
-		nm, _ := PackageName("./" + name)
-		logger.Log("no dest", "name", nm)
-		if nm == "main" {
+		if pkg == nil {
+			pkg, _ = build.ImportDir("./"+name, build.IgnoreVendor)
+		}
+		if pkg.IsCommand() {
 			return true
 		}
 	}
@@ -173,10 +179,11 @@ func ReadDirLinks(path string) ([]string, error) {
 }
 
 func PackageName(path string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	b, err := exec.CommandContext(ctx, "go", "list", "-f", "{{.Name}}", path).Output()
-	cancel()
-	return string(bytes.TrimSpace(b)), err
+	pkg, err := build.ImportDir(path, build.IgnoreVendor)
+	if err != nil {
+		return "", err
+	}
+	return pkg.Name, nil
 }
 
 type ctxA struct{}
@@ -215,7 +222,7 @@ func (lgr defaultLogger) Log(args ...any) {
 	} else {
 		s = "info"
 	}
-	lgr.Logger.Info(s, args...)
+	lgr.Logger.Debug(s, args...)
 }
 func (lgr defaultLogger) Error(args ...any) {
 	if len(args) == 0 {
