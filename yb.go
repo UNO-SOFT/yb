@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/goyek/goyek/v2"
 	"github.com/goyek/x/boot"
@@ -84,6 +85,8 @@ func ResetInstalled() { installedMu.Lock(); clear(installed); installedMu.Unlock
 // GoInstall go install the given name.
 func GoInstall(ctx context.Context, name string, force bool) (bool, error) {
 	if old, err := QtcIsOld(ctx, name); err != nil {
+		logger := LoggerFromContext(ctx)
+		logger.Log("Qtc", "error", err)
 		return true, err
 	} else if old || force {
 		cmd := exec.CommandContext(ctx, "qtc")
@@ -132,6 +135,7 @@ func MTime(paths ...string) int64 {
 // GoShouldBuild reports whether the given package needs compilation.
 func GoShouldBuild(ctx context.Context, name string) bool {
 	logger := LoggerFromContext(ctx)
+	logger.Log("GoShouldBuild", "name", name)
 	if old, err := QtcIsOld(ctx, name); err != nil {
 		logger.Error("QtcIsOld", "error", err)
 		return true
@@ -141,8 +145,10 @@ func GoShouldBuild(ctx context.Context, name string) bool {
 	}
 	var pkg *build.Package
 
-	destTime := MTime(filepath.Join(GoBin, name))
+	fn := filepath.Join(GoBin, name)
+	destTime := MTime(fn)
 	if destTime == 0 {
+		logger.Log("dest notExist", "file", fn)
 		if pkg == nil {
 			pkg, _ = build.ImportDir("./"+name, build.IgnoreVendor)
 		}
@@ -152,14 +158,16 @@ func GoShouldBuild(ctx context.Context, name string) bool {
 	}
 	goModTime := MTime("go.mod")
 	if destTime != 0 && destTime < goModTime {
-		logger.Log("go.mod is newer")
+		logger.Log("go.mod is newer than", "file", fn)
 		return true
 	}
 	files, _ := filepath.Glob(filepath.Join(name, "*.go"))
 	maxTime := MTime(files...)
 	if destTime != 0 && destTime < maxTime {
 		logger.Log("*.go is newer than dest")
+		return true
 	}
+	logger.Log("nothing changed", "destTime", time.UnixMilli(destTime), "maxTime", time.UnixMilli(maxTime), "files", files)
 	return false
 }
 
