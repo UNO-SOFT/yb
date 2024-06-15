@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"go/build"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -84,15 +85,44 @@ func ResetInstalled() { installedMu.Lock(); clear(installed); installedMu.Unlock
 
 // GoInstall go install the given name.
 func GoInstall(ctx context.Context, name string, force bool) (bool, error) {
-	if old, err := QtcIsOld(ctx, name); err != nil {
-		logger := LoggerFromContext(ctx)
-		logger.Log("Qtc", "error", err)
+	logger := LoggerFromContext(ctx)
+	if gen, err := TemplateIsOld(ctx, name, force); err != nil {
+		logger.Log("template", "error", err)
 		return true, err
-	} else if old || force {
-		cmd := exec.CommandContext(ctx, "qtc")
+	} else if gen != "" {
+		var buf strings.Builder
+		if _, err := exec.LookPath(gen); err != nil {
+			logger.Log("lookPath", "gen", gen, "error", err)
+			var from string
+			switch gen {
+			case "qtc":
+				from = "github.com/valyala/quicktemplate/qtc"
+			case "templ":
+				from = "github.com/a-h/templ/cmd/templ"
+			default:
+				return true, err
+			}
+			cmd := exec.CommandContext(ctx, "go", "install", from+"@latest")
+			cmd.Stdout, cmd.Stderr = io.MultiWriter(os.Stdout, &buf), io.MultiWriter(os.Stderr, &buf)
+			logger.Log("run", "cmd", cmd.Args)
+			if err := cmd.Run(); err != nil {
+				logger.Error("run", "cmd", cmd.Args, "error", err, "out", buf.String())
+				return true, fmt.Errorf("%s: %w", buf.String(), err)
+			}
+		}
+
+		args := []string{""}[:0]
+		if gen == "templ" {
+			args = append(args, "generate")
+		}
+		cmd := exec.CommandContext(ctx, gen, args...)
 		cmd.Dir = name
-		if b, err := cmd.CombinedOutput(); err != nil {
-			return true, fmt.Errorf("%s: %w", string(b), err)
+		buf.Reset()
+		cmd.Stdout, cmd.Stderr = io.MultiWriter(os.Stdout, &buf), io.MultiWriter(os.Stderr, &buf)
+		logger.Log("run", "cmd", cmd.Args)
+		if err := cmd.Run(); err != nil {
+			logger.Error("run", "cmd", cmd.Args, "error", err, "out", buf.String())
+			return true, fmt.Errorf("%s: %w", buf.String(), err)
 		}
 	}
 	if force || GoShouldBuild(ctx, name) {
@@ -136,11 +166,11 @@ func MTime(paths ...string) int64 {
 func GoShouldBuild(ctx context.Context, name string) bool {
 	logger := LoggerFromContext(ctx)
 	logger.Log("GoShouldBuild", "name", name)
-	if old, err := QtcIsOld(ctx, name); err != nil {
+	if gen, err := TemplateIsOld(ctx, name, false); err != nil {
 		logger.Error("QtcIsOld", "error", err)
 		return true
-	} else if old {
-		logger.Log("QtcIsOld")
+	} else if gen != "" {
+		logger.Log("template is old", "gen", gen)
 		return true
 	}
 	var pkg *build.Package
@@ -171,10 +201,10 @@ func GoShouldBuild(ctx context.Context, name string) bool {
 	return false
 }
 
-// QtcIsOld reports whether the given directory needs qtc to be run.
-func QtcIsOld(ctx context.Context, root string) (bool, error) {
+// TemplateIsOldreports whether the given directory needs qtc/templ to be run.
+func TemplateIsOld(ctx context.Context, root string, force bool) (string, error) {
 	logger := LoggerFromContext(ctx)
-	var old bool
+	var gen string
 	err := filepath.WalkDir(root, func(path string, di fs.DirEntry, err error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -183,24 +213,26 @@ func QtcIsOld(ctx context.Context, root string) (bool, error) {
 			logger.Error("walk", "path", path, "error", err)
 			return nil
 		}
-		if old {
+		if gen != "" {
 			return fs.SkipAll
 		}
-		if di.Type().IsRegular() && strings.HasSuffix(path, ".qtpl") {
-			fi, err := di.Info()
-			if err != nil {
-				logger.Error("stat", "file", di.Name(), "error", err)
-				old = true
-				return err
-			}
-			if old = fi.ModTime().UnixMilli() > MTime(path+".go"); old {
-				logger.Log("go is older than qtc", "path", path)
-				return fs.SkipAll
+		if di.Type().IsRegular() {
+			if ext := filepath.Ext(path); ext == ".qtpl" || ext == ".templ" {
+				fi, err := di.Info()
+				if err != nil {
+					logger.Error("stat", "file", di.Name(), "error", err)
+					return err
+				}
+				if force || fi.ModTime().UnixMilli() > MTime(path+".go") {
+					gen = ext[1:]
+					logger.Log("go is older than ", "gen", gen, "path", path)
+					return fs.SkipAll
+				}
 			}
 		}
 		return nil
 	})
-	return old, err
+	return gen, err
 }
 
 // Run an external program reporting on a.
