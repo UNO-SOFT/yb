@@ -225,6 +225,9 @@ func TemplateIsOld(ctx context.Context, root string, force bool) (string, error)
 				}
 				if force || fi.ModTime().UnixMilli() > MTime(path+".go") {
 					gen = ext[1:]
+					if gen == "qtpl" {
+						gen = "qtc"
+					}
 					logger.Log("go is older than ", "gen", gen, "path", path)
 					return fs.SkipAll
 				}
