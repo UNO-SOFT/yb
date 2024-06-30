@@ -30,6 +30,17 @@ type (
 	Deps        = goyek.Deps
 	Task        = goyek.Task
 )
+type installOption func(*installParams)
+type installParams struct {
+	Force, Race bool
+}
+
+func WithForce(force bool) installOption {
+	return func(params *installParams) { params.Force = force }
+}
+func WithRace(race bool) installOption {
+	return func(params *installParams) { params.Race = race }
+}
 
 var (
 	Define     = goyek.Define
@@ -84,9 +95,10 @@ func Installed() []string {
 func ResetInstalled() { installedMu.Lock(); clear(installed); installedMu.Unlock() }
 
 // GoInstall go install the given name.
-func GoInstall(ctx context.Context, name string, force bool) (bool, error) {
+func GoInstall(ctx context.Context, name string, opts ...installOption) (bool, error) {
 	logger := LoggerFromContext(ctx)
-	if gen, err := TemplateIsOld(ctx, name, force); err != nil {
+	params := newParams(opts...)
+	if gen, err := TemplateIsOld(ctx, name, params.Force); err != nil {
 		logger.Log("template", "error", err)
 		return true, err
 	} else if gen != "" {
@@ -125,8 +137,12 @@ func GoInstall(ctx context.Context, name string, force bool) (bool, error) {
 			return true, fmt.Errorf("%s: %w", buf.String(), err)
 		}
 	}
-	if force || GoShouldBuild(ctx, name) {
-		cmd := exec.CommandContext(ctx, "go", "install", "-ldflags=-s -w", "-tags="+brunoCus, "./"+name)
+	if params.Force || GoShouldBuild(ctx, name) {
+		args := []string{"install", "-ldflags=-s -w", "-tags=" + brunoCus, "", ""}[:3]
+		if params.Race {
+			args = append(args, "-race")
+		}
+		cmd := exec.CommandContext(ctx, "go", append(args, "./"+name)...)
 		if b, err := cmd.CombinedOutput(); err != nil {
 			return true, fmt.Errorf("%s: %w", string(b), err)
 		}
@@ -140,9 +156,9 @@ func GoInstall(ctx context.Context, name string, force bool) (bool, error) {
 }
 
 // GoInstallA is GoInstall for a.Name() with a.Context().
-func GoInstallA(a *goyek.A, force bool) {
+func GoInstallA(a *goyek.A, opts ...installOption) {
 	a.Helper()
-	if _, err := GoInstall(ContextWithA(a), a.Name(), force); err != nil {
+	if _, err := GoInstall(ContextWithA(a), a.Name(), opts...); err != nil {
 		a.Fatal(err)
 	}
 }
@@ -330,4 +346,12 @@ func (lgr defaultLogger) Error(args ...any) {
 		s = "ERROR"
 	}
 	lgr.Logger.Error(s, args...)
+}
+
+func newParams(opts ...installOption) installParams {
+	var params installParams
+	for _, o := range opts {
+		o(&params)
+	}
+	return params
 }
