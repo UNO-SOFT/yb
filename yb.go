@@ -30,15 +30,15 @@ type (
 	Deps        = goyek.Deps
 	Task        = goyek.Task
 )
-type installOption func(*installParams)
+type InstallOption func(*installParams)
 type installParams struct {
 	Force, Race bool
 }
 
-func WithForce(force bool) installOption {
+func WithForce(force bool) InstallOption {
 	return func(params *installParams) { params.Force = force }
 }
-func WithRace(race bool) installOption {
+func WithRace(race bool) InstallOption {
 	return func(params *installParams) { params.Race = race }
 }
 
@@ -95,7 +95,7 @@ func Installed() []string {
 func ResetInstalled() { installedMu.Lock(); clear(installed); installedMu.Unlock() }
 
 // GoInstall go install the given name.
-func GoInstall(ctx context.Context, name string, opts ...installOption) (bool, error) {
+func GoInstall(ctx context.Context, name string, opts ...InstallOption) (bool, error) {
 	logger := LoggerFromContext(ctx)
 	params := newParams(opts...)
 	if gen, err := TemplateIsOld(ctx, name, params.Force); err != nil {
@@ -156,7 +156,7 @@ func GoInstall(ctx context.Context, name string, opts ...installOption) (bool, e
 }
 
 // GoInstallA is GoInstall for a.Name() with a.Context().
-func GoInstallA(a *goyek.A, opts ...installOption) {
+func GoInstallA(a *goyek.A, opts ...InstallOption) {
 	a.Helper()
 	if _, err := GoInstall(ContextWithA(a), a.Name(), opts...); err != nil {
 		a.Fatal(err)
@@ -255,9 +255,9 @@ func TemplateIsOld(ctx context.Context, root string, force bool) (string, error)
 }
 
 // Run an external program reporting on a.
-func Run(a *goyek.A, progArgs []string, runOptions ...runOption) {
+func Run(a *goyek.A, progArgs []string, opts ...RunOption) {
 	cmd := exec.CommandContext(a.Context(), progArgs[0], progArgs[1:]...)
-	for _, o := range runOptions {
+	for _, o := range opts {
 		o(cmd)
 	}
 	a.Logf("%q", cmd.Args)
@@ -267,10 +267,10 @@ func Run(a *goyek.A, progArgs []string, runOptions ...runOption) {
 	}
 }
 
-type runOption func(*exec.Cmd)
+type RunOption func(*exec.Cmd)
 
-// AtDir runOption sets cmd.Dir.
-func AtDir(dir string) runOption { return func(cmd *exec.Cmd) { cmd.Dir = dir } }
+// AtDir RunOption sets cmd.Dir.
+func AtDir(dir string) RunOption { return func(cmd *exec.Cmd) { cmd.Dir = dir } }
 
 // ReadDirLinks reads the links contained at path dir.
 func ReadDirLinks(path string) ([]string, error) {
@@ -348,7 +348,7 @@ func (lgr defaultLogger) Error(args ...any) {
 	lgr.Logger.Error(s, args...)
 }
 
-func newParams(opts ...installOption) installParams {
+func newParams(opts ...InstallOption) installParams {
 	var params installParams
 	for _, o := range opts {
 		o(&params)
